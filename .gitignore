@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Database
+*.db
+*.sqlite3
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# C++ / compiled
+*.o
+*.elf
+*.bin
+
+# Log captures
+server/static/captures/
