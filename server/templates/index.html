@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Parking Dashboard</title>
+    <title>Parking Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -194,7 +194,7 @@
 <body>
     <div class="container">
         <header>
-            <h1>Smart Parking Dashboard</h1>
+            <h1>Parking Dashboard</h1>
             <div style="text-align: right; color: var(--text-muted);">
                 <div id="clock" style="font-weight: 600; font-size: 1.25rem; color: #fff;">00:00:00</div>
                 <div style="font-size: 0.875rem; display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem; margin-top: 5px;">
@@ -281,6 +281,7 @@
                     let actionText = log.action;
                     if(log.action === 'IN') { badgeClass = 'in'; actionText = 'XE VÀO'; }
                     else if(log.action === 'OUT') { badgeClass = 'out'; actionText = 'XE RA'; }
+                    else if(log.action === 'SAI BIEN SO') { badgeClass = 'unauthorized'; actionText = 'SAI BIỂN SỐ'; }
                     else { badgeClass = 'unauthorized'; actionText = 'THẺ LẠ'; }
 
                     const row = document.createElement('tr');

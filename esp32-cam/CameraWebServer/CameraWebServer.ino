@@ -4,6 +4,8 @@
 
 #define CAMERA_MODEL_AI_THINKER
 #include "camera_pins.h"
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 
 // IP của máy tính (Laptop/PC) đang chạy Server Python
 const char* backendURL = "http://10.206.163.93:5000/api/remote-log";
@@ -14,6 +16,7 @@ const char* password = "12345678";
 void startCameraServer();
 
 void setup() {
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Tắt cảnh báo sụt áp để tránh Reset liên tục
   Serial.begin(115200);   // Giao tiếp với STM32 (U0R, U0T)
   
   // Cổng debug nếu cần (In ra Serial để xem tình trạng WiFi)
@@ -38,7 +41,7 @@ void setup() {
   config.pin_sccb_scl = 27;
   config.pin_pwdn = 32;
   config.pin_reset = -1;
-  config.xclk_freq_hz = 10000000; 
+  config.xclk_freq_hz = 10000000; // Hạ xuống 10MHz để ổn định hơn
   config.pixel_format = PIXFORMAT_JPEG;
 
   if(psramFound()){
@@ -58,6 +61,8 @@ void setup() {
 
   sensor_t * s = esp_camera_sensor_get();
   s->set_framesize(s, FRAMESIZE_VGA); 
+  s->set_vflip(s, 1);     // Giữ nguyên chiều dọc
+  s->set_hmirror(s, 0);   // Lật ngang để không bị soi gương (Mirror)
 
   WiFi.begin(ssid, password);
   WiFi.setSleep(false);

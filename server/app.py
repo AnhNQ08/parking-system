@@ -2,6 +2,7 @@ from flask import Flask, render_template, jsonify, request
 from db import init_db, get_logs, check_auth, get_last_action, insert_log
 from serial_arduino import monitor
 import threading
+import re
 
 import logging
 log = logging.getLogger('werkzeug')
@@ -43,37 +44,77 @@ def remote_log():
                 cmd = f'[OPEN_OUT]{plate}'
             else:
                 direction = 'IN'
-                cmd = f'[OPEN_IN]{plate}'
 
-            print(f"[*] UID={uid} | Truoc={last} | Mo cong: {direction}")
+                print(f"[*] UID={uid} | Truoc={last} | Dang kiem tra bao mat AI...")
+            
+            # 1. Chụp ảnh (Sync)
+            img_url, full_path = monitor._capture_image()
+            
+            # 2. Xử lý AI ngay lập tức (Sync)
+            from plate_recognition import read_license_plate
+            ai_plate = None
+            if full_path:
+                ai_plate = read_license_plate(full_path)
+            
+            # 3. Logic So Khớp (Security Match)
+            # Biển đăng ký trong DB: plate (VD: A1)
+            # Biển AI đọc được: ai_plate (VD: A1 hoặc A4)
+            
+            access_granted = False
+            match_reason = ""
+            
+            if not ai_plate:
+                match_reason = "KHONG THAY BIEN"
+                access_granted = False 
+            else:
+                # SO KHOP TUYET DOI (Bỏ qua ký tự đặc biệt như dấu gạch ngang)
+                # Plate DB: 30-A1 -> 30A1
+                # AI Plate: 30A1
+                clean_db = re.sub(r'[^A-Z0-9]', '', plate.upper())
+                clean_ai = re.sub(r'[^A-Z0-9]', '', ai_plate.upper())
+                
+                if clean_ai == clean_db:
+                    access_granted = True
+                    match_reason = f"KHOP: {ai_plate}"
+                else:
+                    access_granted = False
+                    match_reason = f"SAI: {ai_plate}!=DB:{plate}"
 
-            # Ghi log + chụp ảnh trong background (không chặn response về STM32)
-            def capture_and_log(uid=uid, plate=plate, direction=direction):
-                from plate_recognition import read_license_plate
-                img_url, full_path = monitor._capture_image()
-                final_plate = plate
-                if full_path:
-                    cam_plate = read_license_plate(full_path)
-                    if cam_plate:
-                        print(f"[OCR] Biển số nhận diện: {cam_plate}")
-                        final_plate = cam_plate
-                insert_log(plate=final_plate, action=direction, rfid_uid=uid, image_url=img_url)
-                print(f"[DB] Đã ghi log: {final_plate} | {direction} | {uid}")
+            if access_granted:
+                if direction == 'OUT':
+                    cmd = f'[OPEN_OUT]{ai_plate}'
+                else:
+                    cmd = f'[OPEN_IN]{ai_plate}'
+                print(f">>> CHAP THUAN: {match_reason}")
+                status_rsp = "granted"
+                log_action = direction
+            else:
+                # Sửa message ngắn gọn để hiện lên LCD chuẩn
+                cmd = "[DENIED]SAI BIEN SO"
+                print(f">>> TU CHOI: {match_reason}")
+                status_rsp = "denied"
+                log_action = "SAI BIEN SO"
 
-            threading.Thread(target=capture_and_log, daemon=True).start()
+            # Ghi log kết quả cuối cùng
+            from db import insert_log
+            insert_log(plate=(ai_plate if ai_plate else "NONE"), action=log_action, rfid_uid=uid, image_url=img_url)
 
             return jsonify({
-                "status": "granted",
-                "plate": plate,
+                "status": status_rsp,
+                "plate": ai_plate if ai_plate else "UNKNOWN",
                 "command": cmd
             })
 
         else:
-            # XE LẠ: Gửi lệnh từ chối, vẫn ghi log 'XE LA' để cảnh báo
-            monitor._process_log(f"[XE LA] {uid}")
+            # XE LẠ: Thẻ chưa có trong Database
+            monitor._process_log(f"[THE LA] {uid}")
+            # Ghi log vao database
+            from db import insert_log
+            insert_log(plate="UNKNOWN", action="THE LA", rfid_uid=uid)
+            
             return jsonify({
                 "status": "denied", 
-                "command": "[DENIED]"
+                "command": "[DENIED]THE LA"
             })
 
     # Nếu là log thông thường (IN/OUT đã được STM32 xác nhận hoặc log hệ thống)

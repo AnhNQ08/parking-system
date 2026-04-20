@@ -28,7 +28,7 @@ void showPlate(const char* bienSo, const char* status) {
 
 void showUnknown(const char* uid) {
   lcd.clear();
-  lcd.print("XE LA");
+  lcd.print("   TU CHOI!   ");
   lcd.setCursor(0, 1);
   lcd.print(uid);
 }

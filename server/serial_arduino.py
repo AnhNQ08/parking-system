@@ -64,8 +64,8 @@ class SerialMonitor:
         return None
 
     def _capture_image(self):
-        # Chờ ESP32-CAM rảnh sau khi xử lý SCAN request
-        time.sleep(1.5)
+        # Chờ ngắn để ESP32-CAM rảnh
+        time.sleep(0.5)
 
         static_dir = os.path.join(os.path.dirname(__file__), 'static')
         save_path = os.path.join(static_dir, 'captures')

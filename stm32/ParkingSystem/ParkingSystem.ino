@@ -62,15 +62,16 @@ void loop() {
           stateStartTime = millis();
           currentState = GRANTED;
         }
-        else if (cmd == "[DENIED]") {
-          showUnknown("REJECTED");
+        else if (cmd.startsWith("[DENIED]")) {
+          String reason = cmd.substring(8); // Lay chu sau [DENIED]
+          showUnknown(reason.c_str());
           stateStartTime = millis();
           currentState = DENIED;
         }
       }
 
-      // Timeout nếu Server không phản hồi sau 6 giây
-      if (millis() - stateStartTime > 6000) {
+      // Timeout nếu Server không phản hồi sau 15 giây (Luồng bảo mật AI)
+      if (millis() - stateStartTime > 15000) {
         showUnknown("SRV TIMEOUT");
         stateStartTime = millis();
         currentState = DENIED;
