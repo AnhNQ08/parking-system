@@ -3,8 +3,8 @@
 #include <string.h>
 
 Xe danhSachXe[] = {
-  {"6272125C", "29A-12345"},
-  {"D5B94F06", "30B-67890"}
+  {"6272125C", "A1"},
+  {"D5B94F06", "A2"}
 };
 
 const int SO_XE = 2;

@@ -7,6 +7,7 @@ import os
 import sys
 from datetime import datetime
 from db import insert_log
+from plate_recognition import read_license_plate
 
 # Fix Windows console encoding for Vietnamese prints
 if sys.stdout.encoding.lower() != 'utf-8':
@@ -35,7 +36,7 @@ class SerialMonitor:
                 self.serial_conn.port = self.port
                 self.serial_conn.baudrate = self.baudrate
                 self.serial_conn.timeout = 1
-                self.serial_conn.setDTR(False)
+                self.serial_conn.setDTR(False)  # Tắt để không trigger RESET trên STM32
                 self.serial_conn.setRTS(False)
                 self.serial_conn.open()
                 
@@ -46,7 +47,7 @@ class SerialMonitor:
             except Exception as e:
                 print(f"[!] Không thể mở cổng {self.port}: {e}")
         else:
-            print("[!] Không tìm thấy thiết bị STM32/Arduino nào được cắm vào.")
+            pass
 
     def stop(self):
         self.running = False
@@ -63,25 +64,39 @@ class SerialMonitor:
         return None
 
     def _capture_image(self):
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"capture_{timestamp}.jpg"
-            static_dir = os.path.join(os.path.dirname(__file__), 'static')
-            save_path = os.path.join(static_dir, 'captures')
-            os.makedirs(save_path, exist_ok=True)
-            
-            print(f"[*] Đang chụp ảnh từ {CAMERA_IP}...")
-            resp = requests.get(f"{CAMERA_IP}/capture", timeout=5)
-            if resp.status_code == 200:
-                full_path = os.path.join(save_path, filename)
-                with open(full_path, 'wb') as f:
-                    f.write(resp.content)
-                return f"/static/captures/{filename}"
-            else:
-                print(f"[!] Lỗi chụp từ camera. Status code: {resp.status_code}")
-        except Exception as e:
-            print(f"[!] Không thể gọi API Camera ESP32: {e}")
-        return ""
+        # Chờ ESP32-CAM rảnh sau khi xử lý SCAN request
+        time.sleep(1.5)
+
+        static_dir = os.path.join(os.path.dirname(__file__), 'static')
+        save_path = os.path.join(static_dir, 'captures')
+        os.makedirs(save_path, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"capture_{timestamp}.jpg"
+        full_path = os.path.join(save_path, filename)
+
+        # Retry tối đa 3 lần nếu ESP32-CAM bận
+        for attempt in range(3):
+            try:
+                print(f"[*] Chụp ảnh từ {CAMERA_IP} (lần {attempt + 1})...")
+                resp = requests.get(f"{CAMERA_IP}/capture", timeout=6)
+                if resp.status_code == 200 and len(resp.content) > 1000:
+                    with open(full_path, 'wb') as f:
+                        f.write(resp.content)
+                    print(f"[*] Chụp ảnh thành công: {filename}")
+                    return f"/static/captures/{filename}", full_path
+                else:
+                    print(f"[!] Camera trả về lỗi (status={resp.status_code}, size={len(resp.content)}B), thử lại...")
+            except Exception as e:
+                print(f"[!] Lần {attempt + 1} thất bại: {e}")
+
+            # Chờ trước khi retry
+            if attempt < 2:
+                time.sleep(1.0)
+
+        print("[!] Không thể chụp ảnh sau 3 lần thử.")
+        return "", ""
+
 
     def _read_loop(self):
         while self.running:
@@ -129,21 +144,33 @@ class SerialMonitor:
             uid = line.replace("[XE LA]", "").strip()
         elif "IN" in line or "VAO" in line:
             action = "IN"
-            # Cố gắng lấy biển số (ví dụ: "IN - 29A-1234") -> tùy theo code ở ESP/STM
             parts = line.split()
-            if len(parts) > 1:
-                plate = parts[-1]
+            # [LOG] A1 - IN -> ['[LOG]', 'A1', '-', 'IN']
+            if len(parts) >= 4:
+                plate = parts[1]
         elif "OUT" in line or "RA" in line:
             action = "OUT"
             parts = line.split()
-            if len(parts) > 1:
-                plate = parts[-1]
+            if len(parts) >= 4:
+                plate = parts[1]
             
         # Nếu có sự kiện xảy ra, chạy ở dạng Thread rẽ nhánh (Không chặn luồng quét thẻ)
         if action in ["IN", "OUT", "UNAUTHORIZED"]:
             def run_capture_and_log():
-                img_path = self._capture_image()
-                insert_log(plate=plate, action=action, rfid_uid=uid, image_url=img_path)
+                img_path, full_disk_path = self._capture_image()
+                # Khởi tạo mặc định bằng biển số từ STM32 (nếu có)
+                final_plate = plate 
+                
+                if full_disk_path:
+                    cam_plate = read_license_plate(full_disk_path)
+                    if cam_plate:
+                        print(f"[*] Camera OCR AI nhận diện biển số: {cam_plate}")
+                        # Nếu là xe lạ hoặc biển số từ STM32 là rỗng/UNKNOWN, dùng kết quả từ AI
+                        if action == "UNAUTHORIZED" or plate == "UNKNOWN" or not plate:
+                            final_plate = cam_plate
+                
+                # Ghi log vào cơ sở dữ liệu
+                insert_log(plate=final_plate, action=action, rfid_uid=uid, image_url=img_path)
             
             threading.Thread(target=run_capture_and_log, daemon=True).start()
             

@@ -1,16 +1,19 @@
 #include "config.h"
 #include "pins.h"
 #include "rfid.h"
-#include "vehicle.h"
 #include "lcd_display.h"
 #include "servo_control.h"
-#include "logger.h"
 
-char lastUID[20] = "";
-unsigned long lastScan = 0;
+// Trạng thái hệ thống
+enum SystemState { IDLE, WAITING_AUTH, GRANTED, DENIED };
+SystemState currentState = IDLE;
+
+unsigned long stateStartTime = 0;
+char scannedUID[20] = "";
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);   // PA9/PA10 - chỉ dùng debug qua USB
+  Serial2.begin(115200);  // PA2/PA3  - giao tiếp ESP32-CAM
 
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH);
@@ -23,56 +26,65 @@ void setup() {
 }
 
 void loop() {
+  updateServo(); // Luôn cập nhật vị trí servo mượt mà
 
-  updateServo();
+  switch (currentState) {
+    case IDLE:
+      if (readUID(scannedUID)) {
+        Serial2.print("[SCAN] ");   // Gửi lên ESP32-CAM qua PA2/PA3
+        Serial2.println(scannedUID);
 
-  char uidStr[20];
+        digitalWrite(LED_PIN, LOW);
+        showScanning();
 
-  if (!readUID(uidStr)) return;
+        stateStartTime = millis();
+        currentState = WAITING_AUTH;
+      }
+      break;
 
-  // 🔥 FIX chống quét trùng (QUAN TRỌNG)
-  if (strcmp(uidStr, lastUID) == 0) {
-    if (millis() - lastScan < 1200) return;
+    case WAITING_AUTH:
+      // Đợi phản hồi từ ESP32-CAM qua Serial2 (PA2/PA3)
+      if (Serial2.available()) {
+        String cmd = Serial2.readStringUntil('\n');
+        cmd.trim();
+
+        if (cmd.startsWith("[OPEN_IN]")) {
+          String plate = cmd.substring(9);
+          showPlate(plate.c_str(), "VAO - OK");
+          openIn();
+          stateStartTime = millis();
+          currentState = GRANTED;
+        }
+        else if (cmd.startsWith("[OPEN_OUT]")) {
+          String plate = cmd.substring(10);
+          showPlate(plate.c_str(), "RA - OK");
+          openOut();
+          stateStartTime = millis();
+          currentState = GRANTED;
+        }
+        else if (cmd == "[DENIED]") {
+          showUnknown("REJECTED");
+          stateStartTime = millis();
+          currentState = DENIED;
+        }
+      }
+
+      // Timeout nếu Server không phản hồi sau 6 giây
+      if (millis() - stateStartTime > 6000) {
+        showUnknown("SRV TIMEOUT");
+        stateStartTime = millis();
+        currentState = DENIED;
+      }
+      break;
+
+    case GRANTED:
+    case DENIED:
+      // Giữ màn hình hiển thị kết quả trong 3 giây rồi quay lại IDLE
+      if (millis() - stateStartTime > 3000) {
+        digitalWrite(LED_PIN, HIGH);
+        showWelcome();
+        currentState = IDLE;
+      }
+      break;
   }
-
-  strcpy(lastUID, uidStr);
-  lastScan = millis();
-
-  digitalWrite(LED_PIN, LOW);
-
-  showScanning();
-  delay(500);   // 🔥 cho người dùng nhấc thẻ
-
-  int viTri = timXe(uidStr);
-
-  if (viTri == -1) {
-
-    showUnknown(uidStr);
-    Serial.println("[XE LA]");
-
-  } else {
-
-    const char* bienSo = danhSachXe[viTri].bienSo;
-
-    // 🔥 FIX CHÍNH: toggle trạng thái
-    if (trangThaiXe[viTri] == false) {
-
-      trangThaiXe[viTri] = true;
-
-      showPlate(bienSo, "VAO");
-      openIn();
-      logEvent(bienSo, "IN");
-
-    } else {
-
-      trangThaiXe[viTri] = false;
-
-      showPlate(bienSo, "RA");
-      openOut();
-      logEvent(bienSo, "OUT");
-    }
-  }
-
-  delay(800);  // 🔥 bắt buộc để nhả thẻ
-  digitalWrite(LED_PIN, HIGH);
 }

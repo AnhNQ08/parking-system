@@ -1,8 +1,12 @@
 #include "esp_camera.h"
 #include <WiFi.h>
+#include <HTTPClient.h>
 
 #define CAMERA_MODEL_AI_THINKER
 #include "camera_pins.h"
+
+// IP của máy tính (Laptop/PC) đang chạy Server Python
+const char* backendURL = "http://10.206.163.93:5000/api/remote-log";
 
 const char* ssid = "quang anh";
 const char* password = "12345678";
@@ -10,22 +14,11 @@ const char* password = "12345678";
 void startCameraServer();
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);   // Giao tiếp với STM32 (U0R, U0T)
   
-  // BẬT TÍNH NĂNG IN LOG CHI TIẾT CỦA HỆ THỐNG
-  Serial.setDebugOutput(true); 
-  delay(1000);
+  // Cổng debug nếu cần (In ra Serial để xem tình trạng WiFi)
+  // Serial.setDebugOutput(true); 
 
-  Serial.println("\n\n===== BOOT START =====");
-  
-  // Kiểm tra tình trạng bộ nhớ ban đầu
-  Serial.println("[LOG] Kiem tra bo nho he thong:");
-  Serial.printf("- Total heap: %d\n", ESP.getHeapSize());
-  Serial.printf("- Free heap: %d\n", ESP.getFreeHeap());
-  Serial.printf("- Total PSRAM: %d\n", ESP.getPsramSize());
-  Serial.printf("- Free PSRAM: %d\n", ESP.getFreePsram());
-
-  Serial.println("[LOG] Dang cau hinh Camera Pins...");
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -45,70 +38,81 @@ void setup() {
   config.pin_sccb_scl = 27;
   config.pin_pwdn = 32;
   config.pin_reset = -1;
-  
-  // GIẢM XUNG NHỊP XUỐNG 10MHz ĐỂ TĂNG ĐỘ ỔN ĐỊNH GIAO TIẾP
   config.xclk_freq_hz = 10000000; 
   config.pixel_format = PIXFORMAT_JPEG;
 
-  Serial.println("[LOG] Kiem tra PSRAM de set do phan giai...");
   if(psramFound()){
-    Serial.println("[LOG] -> PSRAM FOUND! Dang ap dung cau hinh AN TOAN (SVGA).");
-    config.frame_size = FRAMESIZE_SVGA; // Đã giảm từ UXGA xuống SVGA
-    config.jpeg_quality = 12;           // Đã tăng số (giảm chất lượng nhẹ) để nhẹ RAM
-    config.fb_count = 1;                // Chỉ dùng 1 FrameBuffer
+    config.frame_size = FRAMESIZE_SVGA;
+    config.jpeg_quality = 10;           
+    config.fb_count = 2;                
   } else {
-    Serial.println("[LOG] -> PSRAM NOT FOUND! Dang ap dung cau hinh THAP (CIF).");
     config.frame_size = FRAMESIZE_CIF;
-    config.jpeg_quality = 15;
+    config.jpeg_quality = 12;
     config.fb_count = 1;
   }
 
-  // Kiểm tra bộ nhớ ngay trước khi khởi tạo
-  Serial.println("[LOG] Bo nho truoc khi goi esp_camera_init:");
-  Serial.printf("- Free heap: %d\n", ESP.getFreeHeap());
-  Serial.printf("- Free PSRAM: %d\n", ESP.getFreePsram());
-
-  Serial.println("[LOG] >>> BAT DAU GOI esp_camera_init() <<<");
   esp_err_t err = esp_camera_init(&config);
-
   if (err != ESP_OK) {
-    Serial.printf("[ERROR] !!! Camera init failed with error 0x%x !!!\n", err);
     return;
   }
 
-  Serial.println("[LOG] <<< ESP_CAMERA_INIT THÀNH CÔNG! >>>");
-
   sensor_t * s = esp_camera_sensor_get();
-  if (s->id.PID == OV3660_PID) {
-    Serial.println("[LOG] OV3660 detected");
-    s->set_vflip(s, 1);
-    s->set_brightness(s, 1);
-    s->set_saturation(s, -2);
-  } else {
-    Serial.printf("[LOG] Camera PID hien tai: 0x%x\n", s->id.PID);
-  }
+  s->set_framesize(s, FRAMESIZE_VGA); 
 
-  s->set_framesize(s, FRAMESIZE_QVGA);
-
-  Serial.println("[LOG] Dang ket noi WiFi...");
   WiFi.begin(ssid, password);
   WiFi.setSleep(false);
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    Serial.print(".");
   }
 
-  Serial.println("\n[LOG] WiFi connected!");
-  Serial.print("[LOG] IP address: ");
-  Serial.println(WiFi.localIP());
-
-  Serial.println("[LOG] Dang khoi tao Camera Server...");
   startCameraServer();
-
-  Serial.println("[LOG] Camera server da chay!");
 }
 
 void loop() {
-  delay(10000);
+  // LẮNG NGHE TÍN HIỆU TỪ STM32
+  if (Serial.available()) {
+    String logLine = Serial.readStringUntil('\n');
+    logLine.trim();
+    
+    if (logLine.length() > 0) {
+      // 1. CHUYỂN TIẾP TRẠNG THÁI LÊN SERVER
+      if(WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+        http.begin(backendURL);
+        http.addHeader("Content-Type", "application/json");
+        
+        String jsonPayload = "{\"log\": \"" + logLine + "\"}";
+        int httpResponseCode = http.POST(jsonPayload);
+        
+        // 2. NHẬN LỆNH ĐIỀU KHIỂN TỪ SERVER VÀ GỬI NGƯỢC VỀ STM32
+        if (httpResponseCode > 0) {
+          String response = http.getString();
+          
+          // Forward lệnh [OPEN_IN] hoặc [OPEN_OUT] về STM32
+          if (response.indexOf("[OPEN_IN]") != -1) {
+              int start = response.indexOf("[OPEN_IN]");
+              int end = response.indexOf("\"", start);
+              if (end == -1) end = response.length() - 1;
+              String cmd = response.substring(start, end);
+              Serial.println(cmd);
+          }
+          else if (response.indexOf("[OPEN_OUT]") != -1) {
+              int start = response.indexOf("[OPEN_OUT]");
+              int end = response.indexOf("\"", start);
+              if (end == -1) end = response.length() - 1;
+              String cmd = response.substring(start, end);
+              Serial.println(cmd);
+          }
+          else if (response.indexOf("[DENIED]") != -1) {
+              Serial.println("[DENIED]");
+          }
+        }
+        http.end();
+      } else {
+        // Nếu mất WiFi, báo lỗi về cho STM32
+        Serial.println("[DENIED]"); 
+      }
+    }
+  }
 }

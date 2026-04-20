@@ -10,6 +10,6 @@
 #define LED_PIN   PC13
 
 #define SERVO_IN_PIN  PA8
-#define SERVO_OUT_PIN PA9
+#define SERVO_OUT_PIN PA1
 
 #endif

@@ -211,7 +211,7 @@
                     <div class="pulse"></div> LIVE (IP: 10.206.163.165)
                 </div>
                 <!-- ESP32-CAM Stream endpoint usually runs on port 81 -->
-                <img src="http://10.206.163.165:81/stream" onerror="this.onerror=null; this.src=''; this.alt='Đang kết nối camera... Nếu hỏng, hãy kiểm tra lại Port Video Stream.';" alt="Live Camera Stream">
+                <img id="stream-img" src="http://10.206.163.165:81/stream" onerror="handleStreamError(this)" alt="Live Camera Stream">
             </div>
         </div>
 
@@ -224,7 +224,7 @@
                         <tr>
                             <th>Time</th>
                             <th>Event</th>
-                            <th>Plate / UID</th>
+                            <th>ID</th>
                             <th>Snapshot</th>
                         </tr>
                     </thead>
@@ -238,6 +238,24 @@
     </div>
 
     <script>
+        const STREAM_URL = "http://10.206.163.165:81/stream";
+        
+        function handleStreamError(img) {
+            img.alt = "Đang thử kết nối lại camera...";
+            // Tránh lặp vô hạn nếu URL hỏng hoàn toàn, nhưng ở đây ta dùng setInterval nên src=''; là ok
+            img.src = ""; 
+        }
+
+        function reloadStream() {
+            const img = document.getElementById('stream-img');
+            // Thêm timestamp để bypass cache và ép trình duyệt thiết lập lại kết nối M-JPEG
+            img.src = `${STREAM_URL}?t=${new Date().getTime()}`;
+            console.log("Stream reloaded at " + new Date().toLocaleTimeString());
+        }
+
+        // Tự động tải lại stream mỗi 2 giây theo yêu cầu để tránh sập
+        setInterval(reloadStream, 2000);
+
         // Start Clock
         setInterval(() => {
             const now = new Date();
